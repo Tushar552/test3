@@ -1,0 +1,81 @@
+name: Otto Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      key:
+        description: Unique correlation key
+        required: true
+      command:
+        description: Command to run
+        required: true
+      runtime:
+        description: Runtime (ubuntu|node|python|django)
+        required: false
+        default: node
+      session:
+        description: Persistent session id for Ubuntu shell
+        required: false
+        default: default
+      apt:
+        description: Space-separated apt packages (Ubuntu only)
+        required: false
+        default: ""
+      cwd:
+        description: Working directory relative to session workspace
+        required: false
+        default: ""
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        if: ${{ inputs.runtime == 'node' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Setup Python
+        if: ${{ inputs.runtime == 'python' || inputs.runtime == 'django' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Django
+        if: ${{ inputs.runtime == 'django' }}
+        run: pip install django
+      - name: Prepare Ubuntu shell workspace
+        if: ${{ inputs.runtime == 'ubuntu' }}
+        run: |
+          mkdir -p .otto_workspace/${{ inputs.session }}
+      - name: Cache Ubuntu shell workspace
+        if: ${{ inputs.runtime == 'ubuntu' }}
+        uses: actions/cache@v4
+        with:
+          path: .otto_workspace/${{ inputs.session }}
+          key: otto-workspace-${{ inputs.session }}
+      - name: Install apt packages
+        if: ${{ inputs.runtime == 'ubuntu' && inputs.apt != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ inputs.apt }}
+      - name: Install Node deps
+        if: ${{ inputs.runtime == 'node' && hashFiles('package.json') != '' }}
+        run: npm ci || npm install
+      - name: Run command
+        shell: bash
+        run: |
+          set -e
+          WORKDIR=.otto_workspace/${{ inputs.session }}
+          mkdir -p "$WORKDIR"
+          printf "%s
+" "${{ inputs.command }}" > "$WORKDIR/.otto_cmd.sh"
+          chmod +x "$WORKDIR/.otto_cmd.sh"
+          if [ "${{ inputs.runtime }}" = "ubuntu" ]; then
+            cd "$WORKDIR"
+            if [ -n "${{ inputs.cwd }}" ]; then cd "${{ inputs.cwd }}"; fi
+            bash -lc "$WORKDIR/.otto_cmd.sh"
+          else
+            bash -lc "$WORKDIR/.otto_cmd.sh"
+          fi
